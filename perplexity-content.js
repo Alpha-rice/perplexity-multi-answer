@@ -68,7 +68,6 @@ function waitForAnswer(timeoutMs = 60000) {
       }
     });
 
-    
     observer.observe(document.body, { childList: true, subtree: true });
   });
 }
