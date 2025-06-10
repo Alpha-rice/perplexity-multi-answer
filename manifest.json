@@ -4,10 +4,10 @@
   "description": "複数クエリをPerplexityに自動送信し、回答を統合レポート化するChrome拡張機能。",
   "version": "1.0.0",
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "public/icon16.png",
+    "32": "public/icon48.png",
+    "48": "public/icon48.png",
+    "128": "public/icon128.png"
   },
   "permissions": [
     "tabs",
@@ -20,25 +20,25 @@
     "https://www.perplexity.ai/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background/background.js"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup/popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "public/icon16.png",
+      "32": "public/icon48.png",
+      "48": "public/icon48.png",
+      "128": "public/icon128.png"
     }
   },
   "content_scripts": [
     {
       "matches": ["https://www.perplexity.ai/*"],
-      "js": ["content.js"],
+      "js": ["src/content/contentScript.js"],
       "run_at": "document_idle"
     }
   ],
-  "options_page": "options.html",
+  "options_page": "src/options/options.html",
   "commands": {
     "_execute_action": {
       "suggested_key": {

@@ -90,3 +90,16 @@ body {
   font-size: 0.95rem;
   display: block;
 }
+
+.execute-btn:disabled {
+  background: #bfc4c9;
+  color: #fff;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.input-textarea:disabled {
+  background: #f0f0f0;
+  color: #888;
+  cursor: not-allowed;
+}

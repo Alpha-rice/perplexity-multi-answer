@@ -1,4 +1,4 @@
-// Perplexityクエリ統合レポート拡張 ポップアップUI用JS
+// Perplexityクエリ統合レポート拡張 ポップアップUI用JS（送信中UIロック・フォームリセット付き）
 
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('query-form');
@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const errorMessage = document.getElementById('error-message');
   const statusMessage = document.getElementById('status-message');
   const executeBtn = document.getElementById('execute-btn');
+
+  let isSending = false;
 
   // エラーメッセージ表示
   function showError(msg) {
@@ -28,10 +30,31 @@ document.addEventListener('DOMContentLoaded', () => {
     statusMessage.style.display = 'none';
   }
 
+  // UIロック
+  function lockUI() {
+    executeBtn.disabled = true;
+    queriesTextarea.disabled = true;
+    promptTextarea.disabled = true;
+    isSending = true;
+  }
+
+  // UIアンロック
+  function unlockUI() {
+    executeBtn.disabled = false;
+    queriesTextarea.disabled = false;
+    promptTextarea.disabled = false;
+    isSending = false;
+  }
+
   // フォーム送信イベント
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     clearMessages();
+
+    if (isSending) {
+      // 多重送信防止
+      return;
+    }
 
     const queries = queriesTextarea.value
       .split('\n')
@@ -50,8 +73,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 送信処理（ここでbackgroundやcontent scriptへメッセージ送信する想定）
+    // 送信処理
     showStatus('クエリを送信中...');
+    lockUI();
 
     chrome.runtime.sendMessage(
       {
@@ -60,12 +84,14 @@ document.addEventListener('DOMContentLoaded', () => {
         prompt
       },
       (response) => {
+        unlockUI();
         if (chrome.runtime.lastError) {
           showError('拡張機能との通信エラー: ' + chrome.runtime.lastError.message);
           return;
         }
         if (response && response.status === 'ok') {
           showStatus('クエリ送信を開始しました。結果は新しいタブで表示されます。');
+          form.reset();
         } else if (response && response.error) {
           showError('エラー: ' + response.error);
         } else {

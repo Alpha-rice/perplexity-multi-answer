@@ -1,4 +1,4 @@
-// Perplexity自動クエリ統合レポート用バックグラウンドスクリプト
+// Perplexity自動クエリ統合レポート用バックグラウンドスクリプト（改善版）
 
 const PERPLEXITY_URL = "https://www.perplexity.ai/";
 const MAX_RETRY = 3;
@@ -9,19 +9,23 @@ let answers = [];
 let retryCounts = {};
 let integratePrompt = "";
 let reportTabId = null;
+let queries = []; // クエリ内容を保持
+let tabListeners = {}; // タブごとのリスナー参照を保持
 
 // ポップアップからのメッセージ受信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START_PERPLEXITY_QUERIES") {
     // 初期化
     queryTabs = [];
-    answers = [];
+    answers = new Array(message.queries.length).fill(null);
     retryCounts = {};
     integratePrompt = message.prompt;
     reportTabId = null;
+    queries = [...message.queries];
+    tabListeners = {};
 
     // クエリごとにタブを開く
-    message.queries.forEach((query, idx) => {
+    queries.forEach((query, idx) => {
       openPerplexityTab(query, idx, 0);
     });
 
@@ -36,10 +40,11 @@ function openPerplexityTab(query, idx, retry) {
     queryTabs[idx] = tab.id;
     retryCounts[tab.id] = retry;
 
-    // タブが完全に読み込まれるまで待ってからスクリプトを実行
-    chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+    // リスナーを外部関数化し、参照を保存
+    const listener = function (tabId, info) {
       if (tabId === tab.id && info.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
+        delete tabListeners[tab.id];
 
         // content scriptにクエリ送信
         chrome.tabs.sendMessage(
@@ -50,19 +55,19 @@ function openPerplexityTab(query, idx, retry) {
           }
         );
       }
-    });
+    };
+    tabListeners[tab.id] = listener;
+    chrome.tabs.onUpdated.addListener(listener);
   });
 }
 
-// content scriptからのwindow.postMessageを受けるための仕組み
+// content scriptからのwindow.postMessageを受けるための仕組み（未使用だが残す）
 chrome.runtime.onMessageExternal?.addListener((msg, sender, sendResponse) => {
   // ここは通常使わないが、外部拡張連携時用
 });
 
 // content scriptからの回答・エラー受信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // content scriptからのwindow.postMessageは直接backgroundには届かないため、
-  // content script側でchrome.runtime.sendMessageを使う必要がある
   if (message.type === "PERPLEXITY_ANSWER" && sender.tab) {
     handleAnswer(sender.tab.id, message.answer);
   } else if (message.type === "PERPLEXITY_ERROR" && sender.tab) {
@@ -78,10 +83,16 @@ function handleAnswer(tabId, answer) {
   answers[idx] = answer;
 
   // タブを閉じる
-  chrome.tabs.remove(tabId);
+  chrome.tabs.remove(tabId, () => {
+    // 念のためリスナーも解除
+    if (tabListeners[tabId]) {
+      chrome.tabs.onUpdated.removeListener(tabListeners[tabId]);
+      delete tabListeners[tabId];
+    }
+  });
 
   // すべての回答が揃ったら統合プロンプト送信
-  if (answers.filter(Boolean).length === queryTabs.length) {
+  if (answers.filter(ans => ans !== null).length === queryTabs.length) {
     sendIntegratePrompt();
   }
 }
@@ -95,17 +106,28 @@ function handleError(tabId, errorMsg) {
   if (retry < MAX_RETRY) {
     // タブを閉じてリトライ
     chrome.tabs.remove(tabId, () => {
-      openPerplexityTab(answers[idx] || "", idx, retry + 1);
+      // 念のためリスナーも解除
+      if (tabListeners[tabId]) {
+        chrome.tabs.onUpdated.removeListener(tabListeners[tabId]);
+        delete tabListeners[tabId];
+      }
+      // 正しいクエリ内容で再送
+      openPerplexityTab(queries[idx], idx, retry + 1);
     });
   } else {
     // リトライ上限→エラーログ保存
     saveErrorLog({ tabId, errorMsg, time: new Date().toISOString() });
     // タブを閉じる
-    chrome.tabs.remove(tabId);
-    // ポップアップ通知
+    chrome.tabs.remove(tabId, () => {
+      if (tabListeners[tabId]) {
+        chrome.tabs.onUpdated.removeListener(tabListeners[tabId]);
+        delete tabListeners[tabId];
+      }
+    });
+    // ポップアップ通知（manifestのパスに合わせて修正）
     chrome.notifications.create({
       type: "basic",
-      iconUrl: "icons/icon128.png",
+      iconUrl: "public/icon128.png",
       title: "Perplexity拡張エラー",
       message: `クエリ${idx + 1}でエラー: ${errorMsg}`,
     });
@@ -125,9 +147,11 @@ function sendIntegratePrompt() {
   chrome.tabs.create({ url: PERPLEXITY_URL, active: true }, (tab) => {
     reportTabId = tab.id;
 
-    chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+    // リスナーを外部関数化し、参照を保存
+    const listener = function (tabId, info) {
       if (tabId === tab.id && info.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
+        delete tabListeners[tab.id];
 
         // content scriptに統合プロンプト送信
         chrome.tabs.sendMessage(
@@ -138,7 +162,9 @@ function sendIntegratePrompt() {
           }
         );
       }
-    });
+    };
+    tabListeners[tab.id] = listener;
+    chrome.tabs.onUpdated.addListener(listener);
   });
 }
 
