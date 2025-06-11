@@ -4,10 +4,10 @@
   "description": "複数クエリをPerplexityに自動送信し、回答を統合レポート化するChrome拡張機能。",
   "version": "1.0.0",
   "icons": {
-    "16": "public/icon16.png",
-    "32": "public/icon48.png",
-    "48": "public/icon48.png",
-    "128": "public/icon128.png"
+    "16": "icons/icon16.png",
+    "32": "icons/icon48.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "permissions": [
     "tabs",
@@ -25,10 +25,10 @@
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_icon": {
-      "16": "public/icon16.png",
-      "32": "public/icon48.png",
-      "48": "public/icon48.png",
-      "128": "public/icon128.png"
+      "16": "icons/icon16.png",
+      "32": "icons/icon48.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
   "content_scripts": [
