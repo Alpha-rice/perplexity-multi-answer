@@ -1,5 +1,5 @@
 /**
- * Perplexity自動クエリ送信・回答取得用Content Script（堅牢性強化＋自動検索対応版）
+ * Perplexity自動クエリ送信・複数回対応Content Script
  */
 
 const INPUT_SELECTORS = [
@@ -97,16 +97,15 @@ async function sendQueryAndGetAnswer(query) {
     lastSentQuery = query; // 直近のクエリを記録
 
     const answer = await waitForAnswer();
-    chrome.runtime.sendMessage({ type: 'PERPLEXITY_ANSWER', answer });
+    return answer;
   } catch (err) {
-    chrome.runtime.sendMessage({ type: 'PERPLEXITY_ERROR', message: err && err.message ? err.message : String(err) });
+    throw err;
   }
 }
 
 // 回答監視（タイムアウトはsetTimeoutで確実に発火）
 function waitForAnswer(timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
-    const start = Date.now();
     let lastAnswer = '';
     let finished = false;
 
@@ -152,35 +151,71 @@ function waitForAnswer(timeoutMs = 60000) {
   });
 }
 
-// メッセージ経由でのクエリ送信
+// メッセージ経由での複数クエリ送信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'PERPLEXITY_SEND_QUERY' && message.query) {
-    let responded = false;
-    // タイムアウト保険（例: 70秒後に強制応答）
-    const failSafeTimer = setTimeout(() => {
+  let responded = false;
+  // タイムアウト保険（例: 70秒×クエリ数後に強制応答）
+  const timeoutMs = Math.max(70000, 70000 * (message.queries ? message.queries.length : 1));
+  const failSafeTimer = setTimeout(() => {
+    if (!responded) {
+      responded = true;
+      sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
+    }
+  }, timeoutMs);
+
+  (async () => {
+    try {
+      if (message.type === 'PERPLEXITY_SEND_QUERY' && Array.isArray(message.queries) && message.queries.length > 0) {
+        const answers = [];
+        for (let i = 0; i < message.queries.length; i++) {
+          const q = message.queries[i];
+          try {
+            const answer = await sendQueryAndGetAnswer(q);
+            answers.push(answer);
+          } catch (err) {
+            answers.push({ error: err && err.message ? err.message : String(err) });
+          }
+          // Perplexity側のUIが落ち着くまで少し待つ
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'ok', answers });
+        }
+      } else if (message.type === 'PERPLEXITY_SEND_QUERY' && typeof message.query === 'string') {
+        // 互換: 単一クエリ
+        try {
+          const answer = await sendQueryAndGetAnswer(message.query);
+          if (!responded) {
+            responded = true;
+            clearTimeout(failSafeTimer);
+            sendResponse({ status: 'ok', answers: [answer] });
+          }
+        } catch (err) {
+          if (!responded) {
+            responded = true;
+            clearTimeout(failSafeTimer);
+            sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
+          }
+        }
+      } else {
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'error', message: '不正なリクエスト' });
+        }
+      }
+    } catch (err) {
       if (!responded) {
         responded = true;
-        sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
+        clearTimeout(failSafeTimer);
+        sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
       }
-    }, 70000);
+    }
+  })();
 
-    sendQueryAndGetAnswer(message.query)
-      .then(() => {
-        if (!responded) {
-          responded = true;
-          clearTimeout(failSafeTimer);
-          sendResponse({ status: 'ok' });
-        }
-      })
-      .catch(err => {
-        if (!responded) {
-          responded = true;
-          clearTimeout(failSafeTimer);
-          sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
-        }
-      });
-    return true; // 非同期応答のため必須
-  }
+  return true; // 非同期応答のため必須
 });
 
 // --- ここから自動検索イベントリスナー追加 ---
@@ -198,7 +233,6 @@ function setupAutoSearchOnUserInput() {
     if (e.key === 'Enter' && !e.shiftKey) {
       const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
       if (query && query !== lastSentQuery) {
-        // 送信ボタンを押す前に自動送信
         sendQueryAndGetAnswer(query);
         e.preventDefault();
       }
