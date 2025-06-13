@@ -1,5 +1,5 @@
 /**
- * Perplexity自動クエリ送信・複数回対応Content Script
+ * Perplexity 自動クエリ送信・複数回対応 Content-Script（async-response 修正版）
  */
 
 const INPUT_SELECTORS = [
@@ -8,7 +8,7 @@ const INPUT_SELECTORS = [
   'textarea[data-testid="search-input"]',
   'textarea[name="q"]',
   'input[type="text"][placeholder*="Ask"]',
-  'div[contenteditable="true"]'
+  'div[contenteditable="true"]',
 ];
 
 const SEND_BUTTON_SELECTORS = [
@@ -16,7 +16,7 @@ const SEND_BUTTON_SELECTORS = [
   'button[aria-label="送信"]',
   'button[type="submit"]',
   'button:has(svg)',
-  '[data-testid="send-button"]'
+  '[data-testid="send-button"]',
 ];
 
 const ANSWER_CONTAINER_SELECTORS = [
@@ -24,7 +24,7 @@ const ANSWER_CONTAINER_SELECTORS = [
   '[data-testid="answer"]',
   '.answer-container',
   '[role="main"] > div',
-  'main > div > div'
+  'main > div > div',
 ];
 
 // 進行中の監視を管理
@@ -32,118 +32,100 @@ let currentObserver = null;
 let currentStableTimeout = null;
 let currentTimeoutTimer = null;
 
-// 直近のクエリを記録し、重複送信を防ぐ
+// 直近のクエリ（重複送信防止）
 let lastSentQuery = '';
 
+/* ---------- 便利 util ---------- */
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function findElement(selectors) {
-  for (const selector of selectors) {
-    const element = document.querySelector(selector);
-    if (element) return element;
+  for (const s of selectors) {
+    const el = document.querySelector(s);
+    if (el) return el;
   }
   return null;
 }
 
+/* ---------- メイン処理 ---------- */
 async function sendQueryAndGetAnswer(query) {
-  try {
-    // 進行中の監視をキャンセル
-    if (currentObserver) {
-      currentObserver.disconnect();
-      currentObserver = null;
-    }
-    if (currentStableTimeout) {
-      clearTimeout(currentStableTimeout);
-      currentStableTimeout = null;
-    }
-    if (currentTimeoutTimer) {
-      clearTimeout(currentTimeoutTimer);
-      currentTimeoutTimer = null;
-    }
+  // 監視をリセット
+  if (currentObserver) currentObserver.disconnect();
+  if (currentStableTimeout) clearTimeout(currentStableTimeout);
+  if (currentTimeoutTimer) clearTimeout(currentTimeoutTimer);
+  currentObserver = currentStableTimeout = currentTimeoutTimer = null;
 
-    const input = findElement(INPUT_SELECTORS);
-    if (!input) throw new Error('Perplexityの入力欄が見つかりません（未ログインの可能性あり）');
+  const input = findElement(INPUT_SELECTORS);
+  if (!input)
+    throw new Error('Perplexity の入力欄が見つかりません（未ログイン？）');
 
-    input.focus();
+  input.focus();
 
-    // contenteditableの場合
-    if (input.contentEditable === 'true') {
-      input.textContent = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.textContent = query;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    } else {
-      input.value = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.value = query;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // 送信ボタンが有効になるまで最大10回再取得
-    let sendBtn = null;
-    let attempts = 0;
-    while (attempts < 10) {
-      sendBtn = findElement(SEND_BUTTON_SELECTORS);
-      if (sendBtn && !sendBtn.disabled) break;
-      await new Promise(resolve => setTimeout(resolve, 200));
-      attempts++;
-    }
-    if (!sendBtn || sendBtn.disabled) throw new Error('送信ボタンが有効になりません');
-
-    sendBtn.click();
-
-    lastSentQuery = query; // 直近のクエリを記録
-
-    const answer = await waitForAnswer();
-    return answer;
-  } catch (err) {
-    throw err;
+  if (input.contentEditable === 'true') {
+    input.textContent = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.textContent = query;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.value = query;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
   }
+
+  await delay(400);
+
+  // 送信ボタンが活性化されるまでリトライ
+  let sendBtn = null;
+  for (let i = 0; i < 10; i++) {
+    sendBtn = findElement(SEND_BUTTON_SELECTORS);
+    if (sendBtn && !sendBtn.disabled) break;
+    await delay(150);
+  }
+  if (!sendBtn || sendBtn.disabled)
+    throw new Error('送信ボタンが有効になりません');
+
+  sendBtn.click();
+  lastSentQuery = query;
+
+  return await waitForAnswer();
 }
 
-// 回答監視（タイムアウトはsetTimeoutで確実に発火）
+/* 回答待ち */
 function waitForAnswer(timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
-    let lastAnswer = '';
     let finished = false;
+    let lastAnswer = '';
 
-    // タイムアウト監視
     currentTimeoutTimer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      if (currentObserver) currentObserver.disconnect();
-      if (currentStableTimeout) clearTimeout(currentStableTimeout);
-      reject(new Error('回答の取得にタイムアウトしました'));
+      if (!finished) {
+        finished = true;
+        currentObserver?.disconnect();
+        reject(new Error('回答取得がタイムアウト'));
+      }
     }, timeoutMs);
 
     currentObserver = new MutationObserver(() => {
       if (finished) return;
 
-      let answerNodes = [];
-      for (const selector of ANSWER_CONTAINER_SELECTORS) {
-        const nodes = document.querySelectorAll(selector);
-        if (nodes.length > 0) {
-          answerNodes = Array.from(nodes);
-          break;
-        }
-      }
+      for (const sel of ANSWER_CONTAINER_SELECTORS) {
+        const nodes = document.querySelectorAll(sel);
+        if (!nodes?.length) continue;
 
-      if (answerNodes.length > 0) {
-        const lastNode = answerNodes[answerNodes.length - 1];
-        const text = lastNode.innerText.trim();
+        const text = nodes[nodes.length - 1].innerText.trim();
         if (text && text !== lastAnswer && text.length > 10) {
           lastAnswer = text;
-          if (currentStableTimeout) clearTimeout(currentStableTimeout);
+          clearTimeout(currentStableTimeout);
           currentStableTimeout = setTimeout(() => {
             if (finished) return;
             finished = true;
-            if (currentObserver) currentObserver.disconnect();
-            if (currentTimeoutTimer) clearTimeout(currentTimeoutTimer);
+            currentObserver.disconnect();
+            clearTimeout(currentTimeoutTimer);
             resolve(lastAnswer);
-          }, 3000);
+          }, 2500);
         }
+        break;
       }
     });
 
@@ -151,12 +133,19 @@ function waitForAnswer(timeoutMs = 60000) {
   });
 }
 
-// メッセージ経由での複数クエリ送信
+/* ---------- onMessage ---------- */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // 対象メッセージでなければ同期的に終了させる
+  const isHandled =
+    message?.type === 'PERPLEXITY_SEND_QUERY' &&
+    (Array.isArray(message.queries) || typeof message.query === 'string');
+
+  if (!isHandled) return; // ここで true を返さない -> ポートは閉じられる
+
   let responded = false;
-  // タイムアウト保険（例: 70秒×クエリ数後に強制応答）
-  const timeoutMs = Math.max(70000, 70000 * (message.queries ? message.queries.length : 1));
-  const failSafeTimer = setTimeout(() => {
+  const timeoutMs =
+    Math.max(70000, 70000 * (message.queries?.length || 1));
+  const failSafe = setTimeout(() => {
     if (!responded) {
       responded = true;
       sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
@@ -165,73 +154,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   (async () => {
     try {
-      if (message.type === 'PERPLEXITY_SEND_QUERY' && Array.isArray(message.queries) && message.queries.length > 0) {
-        const answers = [];
-        for (let i = 0; i < message.queries.length; i++) {
-          const q = message.queries[i];
-          try {
-            const answer = await sendQueryAndGetAnswer(q);
-            answers.push(answer);
-          } catch (err) {
-            answers.push({ error: err && err.message ? err.message : String(err) });
-          }
-          // Perplexity側のUIが落ち着くまで少し待つ
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        if (!responded) {
-          responded = true;
-          clearTimeout(failSafeTimer);
-          sendResponse({ status: 'ok', answers });
-        }
-      } else if (message.type === 'PERPLEXITY_SEND_QUERY' && typeof message.query === 'string') {
-        // 互換: 単一クエリ
+      const queries = Array.isArray(message.queries)
+        ? message.queries
+        : [message.query];
+
+      const answers = [];
+      for (const q of queries) {
         try {
-          const answer = await sendQueryAndGetAnswer(message.query);
-          if (!responded) {
-            responded = true;
-            clearTimeout(failSafeTimer);
-            sendResponse({ status: 'ok', answers: [answer] });
-          }
-        } catch (err) {
-          if (!responded) {
-            responded = true;
-            clearTimeout(failSafeTimer);
-            sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
-          }
+          answers.push(await sendQueryAndGetAnswer(q));
+        } catch (e) {
+          answers.push({ error: e?.message || String(e) });
         }
-      } else {
-        if (!responded) {
-          responded = true;
-          clearTimeout(failSafeTimer);
-          sendResponse({ status: 'error', message: '不正なリクエスト' });
-        }
+        await delay(900); // UI 安定待ち
       }
-    } catch (err) {
+
       if (!responded) {
         responded = true;
-        clearTimeout(failSafeTimer);
-        sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
+        clearTimeout(failSafe);
+        sendResponse({ status: 'ok', answers });
+      }
+    } catch (e) {
+      if (!responded) {
+        responded = true;
+        clearTimeout(failSafe);
+        sendResponse({ status: 'error', message: e?.message || String(e) });
       }
     }
   })();
 
-  return true; // 非同期応答のため必須
+  return true; // 非同期応答
 });
 
-// --- ここから自動検索イベントリスナー追加 ---
-
-function setupAutoSearchOnUserInput() {
+/* ---------- ユーザー手入力監視 ---------- */
+function setupAutoSearch() {
   const input = findElement(INPUT_SELECTORS);
-  if (!input) return;
-
-  // すでにイベントが設定されていれば重複しないように
-  if (input._perplexityAutoSearchSetup) return;
+  if (!input || input._perplexityAutoSearchSetup) return;
   input._perplexityAutoSearchSetup = true;
 
-  // Enterキーで送信（Shift+Enterは改行）
-  input.addEventListener('keydown', function(e) {
+  input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+      const query =
+        input.contentEditable === 'true'
+          ? input.textContent.trim()
+          : input.value.trim();
       if (query && query !== lastSentQuery) {
         sendQueryAndGetAnswer(query);
         e.preventDefault();
@@ -239,12 +204,14 @@ function setupAutoSearchOnUserInput() {
     }
   });
 
-  // 送信ボタン押下時にも自動送信（ユーザーが直接ボタンを押した場合）
   const sendBtn = findElement(SEND_BUTTON_SELECTORS);
   if (sendBtn && !sendBtn._perplexityAutoSearchSetup) {
     sendBtn._perplexityAutoSearchSetup = true;
-    sendBtn.addEventListener('click', function() {
-      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+    sendBtn.addEventListener('click', () => {
+      const query =
+        input.contentEditable === 'true'
+          ? input.textContent.trim()
+          : input.value.trim();
       if (query && query !== lastSentQuery) {
         sendQueryAndGetAnswer(query);
       }
@@ -252,15 +219,11 @@ function setupAutoSearchOnUserInput() {
   }
 }
 
-// ページロード時と動的DOM変化時に監視して自動セットアップ
-function observeInputAndButton() {
-  setupAutoSearchOnUserInput();
-  // 入力欄やボタンが動的に変わる場合にも対応
-  const observer = new MutationObserver(() => {
-    setupAutoSearchOnUserInput();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+function observeDomForInputs() {
+  setupAutoSearch();
+  const obs = new MutationObserver(setupAutoSearch);
+  obs.observe(document.body, { childList: true, subtree: true });
 }
 
 // 初期化
-observeInputAndButton();
+observeDomForInputs();
