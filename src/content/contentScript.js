@@ -146,11 +146,33 @@ function waitForAnswer(timeoutMs = 60000) {
     currentObserver.observe(document.body, { childList: true, subtree: true });
   });
 }
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'PERPLEXITY_SEND_QUERY' && message.query) {
+    let responded = false;
+    // タイムアウト保険（例: 70秒後に強制応答）
+    const failSafeTimer = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
+      }
+    }, 70000);
+
     sendQueryAndGetAnswer(message.query)
-      .then(() => sendResponse({ status: 'ok' }))
-      .catch(err => sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) }));
+      .then(() => {
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'ok' });
+        }
+      })
+      .catch(err => {
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
+        }
+      });
     return true; // 非同期応答のため必須
   }
 });
