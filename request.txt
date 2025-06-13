@@ -6,10 +6,11 @@
 ### 機能要件
 
 - ポップアップUI
-  - クエリ一括入力用テキストエリア（2～5件、改行区切り）
-  - 統合プロンプト編集欄
+  - クエリ入力用テキストエリア
+  - 統合プロンプト編集欄(config)
+  - 検索回数編集欄(config)
 - 右クリックメニューからも起動可能
-- 新しいタブで各クエリをPerplexity Web UIに自動入力・送信
+- 新しいタブでクエリを検索回数分一括でPerplexity Web UIに自動入力・自動送信
 - ユーザーがPerplexityへログイン済みであることを前提
   - 未ログイン時はエラー通知
 - すべてのクエリ回答取得後、統合プロンプトとともに回答をまとめてPerplexityに自動送信
@@ -23,6 +24,21 @@
 - 連携サービスはPerplexityのみ
 - クエリ内容や履歴の保存は行わない
 
+perplexity-multi-answer/
+├── manifest.json           # Extension configuration
+├── icons/                  # Extension icons
+│   ├── icon16.png
+│   ├── icon32.png
+│   ├── icon48.png
+│   └── icon128.png
+├── src/
+│   ├── background/         # Background service worker
+│   ├── content/           # Content scripts for Perplexity integration
+│   ├── options/           # Extension options page
+│   ├── popup/             # Popup interface
+│   └── utils/             # Shared utilities
+└── README.md              # This file
+
 ### 開発・運用
 
 - Qodo＋GitHub連携
@@ -30,3 +46,4 @@
   - テスト自動生成・Issue管理はOpenHandsに一任
 - CI/CDはGitHub Actionsまたは実環境
 - デプロイ先はChrome Web Storeを想定
+
