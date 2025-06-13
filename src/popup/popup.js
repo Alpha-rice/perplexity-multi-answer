@@ -1,14 +1,24 @@
-// Perplexityクエリ統合レポート拡張 ポップアップUI用JS（送信中UIロック・フォームリセット付き）
-
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('query-form');
-  const queriesTextarea = document.getElementById('queries');
+  const queryTextarea = document.getElementById('query');
   const promptTextarea = document.getElementById('integrate-prompt');
+  const countInput = document.getElementById('query-count');
   const errorMessage = document.getElementById('error-message');
   const statusMessage = document.getElementById('status-message');
   const executeBtn = document.getElementById('execute-btn');
 
   let isSending = false;
+  let errorLog = [];
+
+  // エラーログ保存（localStorage利用）
+  function saveErrorLog(entry) {
+    errorLog.push(entry);
+    try {
+      localStorage.setItem('perplexity_error_log', JSON.stringify(errorLog));
+    } catch (e) {
+      // 保存失敗時は無視
+    }
+  }
 
   // エラーメッセージ表示
   function showError(msg) {
@@ -33,17 +43,72 @@ document.addEventListener('DOMContentLoaded', () => {
   // UIロック
   function lockUI() {
     executeBtn.disabled = true;
-    queriesTextarea.disabled = true;
+    queryTextarea.disabled = true;
     promptTextarea.disabled = true;
+    countInput.disabled = true;
     isSending = true;
   }
 
   // UIアンロック
   function unlockUI() {
     executeBtn.disabled = false;
-    queriesTextarea.disabled = false;
+    queryTextarea.disabled = false;
     promptTextarea.disabled = false;
+    countInput.disabled = false;
     isSending = false;
+  }
+
+  // クエリ送信処理（リトライ付き）
+  function sendQueriesWithRetry(queries, prompt, retryCount = 3) {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      let lastError = null;
+
+      function trySend() {
+        chrome.runtime.sendMessage(
+          {
+            type: 'START_PERPLEXITY_QUERIES',
+            queries,
+            prompt
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              lastError = chrome.runtime.lastError.message;
+              attempts++;
+              if (attempts < retryCount) {
+                showStatus(`通信エラー。リトライ中...（${attempts}/${retryCount}）`);
+                setTimeout(trySend, 1000);
+              } else {
+                reject(lastError);
+              }
+              return;
+            }
+            if (response && response.status === 'ok') {
+              resolve();
+            } else if (response && response.error) {
+              lastError = response.error;
+              attempts++;
+              if (attempts < retryCount) {
+                showStatus(`エラー発生。リトライ中...（${attempts}/${retryCount}）`);
+                setTimeout(trySend, 1000);
+              } else {
+                reject(lastError);
+              }
+            } else {
+              lastError = '不明なエラーが発生しました';
+              attempts++;
+              if (attempts < retryCount) {
+                showStatus(`不明なエラー。リトライ中...（${attempts}/${retryCount}）`);
+                setTimeout(trySend, 1000);
+              } else {
+                reject(lastError);
+              }
+            }
+          }
+        );
+      }
+      trySend();
+    });
   }
 
   // フォーム送信イベント
@@ -56,48 +121,59 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const queries = queriesTextarea.value
-      .split('\n')
-      .map(q => q.trim())
-      .filter(q => q.length > 0);
-
+    const query = queryTextarea.value.trim();
     const prompt = promptTextarea.value.trim();
+    const count = parseInt(countInput.value, 10);
 
     // バリデーション
-    if (queries.length < 2 || queries.length > 5) {
-      showError('クエリは2～5件入力してください（改行区切り）');
+    if (!query) {
+      showError('クエリを入力してください');
       return;
     }
     if (!prompt) {
       showError('統合プロンプトを入力してください');
       return;
     }
+    if (isNaN(count) || count < 2 || count > 5) {
+      showError('送信回数は2～5回で指定してください');
+      return;
+    }
+
+    // 同じクエリを指定回数分の配列に
+    const queries = Array(count).fill(query);
 
     // 送信処理
     showStatus('クエリを送信中...');
     lockUI();
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'START_PERPLEXITY_QUERIES',
-        queries,
-        prompt
-      },
-      (response) => {
+    sendQueriesWithRetry(queries, prompt, 3)
+      .then(() => {
         unlockUI();
-        if (chrome.runtime.lastError) {
-          showError('拡張機能との通信エラー: ' + chrome.runtime.lastError.message);
-          return;
-        }
-        if (response && response.status === 'ok') {
-          showStatus('クエリ送信を開始しました。結果は新しいタブで表示されます。');
-          form.reset();
-        } else if (response && response.error) {
-          showError('エラー: ' + response.error);
-        } else {
-          showError('不明なエラーが発生しました');
-        }
-      }
-    );
+        showStatus('クエリ送信を開始しました。結果は新しいタブで表示されます。');
+        // 統合プロンプトはリセットしない
+        const promptValue = promptTextarea.value;
+        form.reset();
+        promptTextarea.value = promptValue;
+      })
+      .catch((errMsg) => {
+        unlockUI();
+        showError('エラー: ' + errMsg);
+        saveErrorLog({
+          time: new Date().toISOString(),
+          queries,
+          prompt,
+          error: errMsg
+        });
+      });
   });
+
+  // エラーログの初期化（localStorageから取得）
+  try {
+    const stored = localStorage.getItem('perplexity_error_log');
+    if (stored) {
+      errorLog = JSON.parse(stored);
+    }
+  } catch (e) {
+    errorLog = [];
+  }
 });
