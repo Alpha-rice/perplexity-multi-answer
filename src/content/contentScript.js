@@ -1,5 +1,5 @@
 /**
- * Perplexity 自動クエリ送信・複数回対応 Content-Script（async-response 修正版）
+ * Perplexity 自動クエリ送信・複数回対応 Content Script（堅牢・最新パターン）
  */
 
 const INPUT_SELECTORS = [
@@ -35,7 +35,6 @@ let currentTimeoutTimer = null;
 // 直近のクエリ（重複送信防止）
 let lastSentQuery = '';
 
-/* ---------- 便利 util ---------- */
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function findElement(selectors) {
@@ -46,7 +45,6 @@ function findElement(selectors) {
   return null;
 }
 
-/* ---------- メイン処理 ---------- */
 async function sendQueryAndGetAnswer(query) {
   // 監視をリセット
   if (currentObserver) currentObserver.disconnect();
@@ -92,16 +90,21 @@ async function sendQueryAndGetAnswer(query) {
   return await waitForAnswer();
 }
 
-/* 回答待ち */
 function waitForAnswer(timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     let finished = false;
     let lastAnswer = '';
 
+    function cleanup() {
+      finished = true;
+      if (currentObserver) currentObserver.disconnect();
+      if (currentStableTimeout) clearTimeout(currentStableTimeout);
+      if (currentTimeoutTimer) clearTimeout(currentTimeoutTimer);
+    }
+
     currentTimeoutTimer = setTimeout(() => {
       if (!finished) {
-        finished = true;
-        currentObserver?.disconnect();
+        cleanup();
         reject(new Error('回答取得がタイムアウト'));
       }
     }, timeoutMs);
@@ -116,13 +119,12 @@ function waitForAnswer(timeoutMs = 60000) {
         const text = nodes[nodes.length - 1].innerText.trim();
         if (text && text !== lastAnswer && text.length > 10) {
           lastAnswer = text;
-          clearTimeout(currentStableTimeout);
+          if (currentStableTimeout) clearTimeout(currentStableTimeout);
           currentStableTimeout = setTimeout(() => {
-            if (finished) return;
-            finished = true;
-            currentObserver.disconnect();
-            clearTimeout(currentTimeoutTimer);
-            resolve(lastAnswer);
+            if (!finished) {
+              cleanup();
+              resolve(lastAnswer);
+            }
           }, 2500);
         }
         break;
@@ -133,18 +135,15 @@ function waitForAnswer(timeoutMs = 60000) {
   });
 }
 
-/* ---------- onMessage ---------- */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 対象メッセージでなければ同期的に終了させる
   const isHandled =
     message?.type === 'PERPLEXITY_SEND_QUERY' &&
     (Array.isArray(message.queries) || typeof message.query === 'string');
 
-  if (!isHandled) return; // ここで true を返さない -> ポートは閉じられる
+  if (!isHandled) return; // 対象外は同期終了
 
   let responded = false;
-  const timeoutMs =
-    Math.max(70000, 70000 * (message.queries?.length || 1));
+  const timeoutMs = Math.max(70000, 70000 * (message.queries?.length || 1));
   const failSafe = setTimeout(() => {
     if (!responded) {
       responded = true;
@@ -185,7 +184,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // 非同期応答
 });
 
-/* ---------- ユーザー手入力監視 ---------- */
 function setupAutoSearch() {
   const input = findElement(INPUT_SELECTORS);
   if (!input || input._perplexityAutoSearchSetup) return;
