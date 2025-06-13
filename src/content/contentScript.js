@@ -1,5 +1,5 @@
 /**
- * Perplexity自動クエリ送信・回答取得用Content Script（堅牢性強化版）
+ * Perplexity自動クエリ送信・回答取得用Content Script（堅牢性強化＋自動検索対応版）
  */
 
 const INPUT_SELECTORS = [
@@ -31,6 +31,9 @@ const ANSWER_CONTAINER_SELECTORS = [
 let currentObserver = null;
 let currentStableTimeout = null;
 let currentTimeoutTimer = null;
+
+// 直近のクエリを記録し、重複送信を防ぐ
+let lastSentQuery = '';
 
 function findElement(selectors) {
   for (const selector of selectors) {
@@ -91,6 +94,8 @@ async function sendQueryAndGetAnswer(query) {
 
     sendBtn.click();
 
+    lastSentQuery = query; // 直近のクエリを記録
+
     const answer = await waitForAnswer();
     chrome.runtime.sendMessage({ type: 'PERPLEXITY_ANSWER', answer });
   } catch (err) {
@@ -147,6 +152,7 @@ function waitForAnswer(timeoutMs = 60000) {
   });
 }
 
+// メッセージ経由でのクエリ送信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'PERPLEXITY_SEND_QUERY' && message.query) {
     let responded = false;
@@ -176,3 +182,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // 非同期応答のため必須
   }
 });
+
+// --- ここから自動検索イベントリスナー追加 ---
+
+function setupAutoSearchOnUserInput() {
+  const input = findElement(INPUT_SELECTORS);
+  if (!input) return;
+
+  // すでにイベントが設定されていれば重複しないように
+  if (input._perplexityAutoSearchSetup) return;
+  input._perplexityAutoSearchSetup = true;
+
+  // Enterキーで送信（Shift+Enterは改行）
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+      if (query && query !== lastSentQuery) {
+        // 送信ボタンを押す前に自動送信
+        sendQueryAndGetAnswer(query);
+        e.preventDefault();
+      }
+    }
+  });
+
+  // 送信ボタン押下時にも自動送信（ユーザーが直接ボタンを押した場合）
+  const sendBtn = findElement(SEND_BUTTON_SELECTORS);
+  if (sendBtn && !sendBtn._perplexityAutoSearchSetup) {
+    sendBtn._perplexityAutoSearchSetup = true;
+    sendBtn.addEventListener('click', function() {
+      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+      if (query && query !== lastSentQuery) {
+        sendQueryAndGetAnswer(query);
+      }
+    });
+  }
+}
+
+// ページロード時と動的DOM変化時に監視して自動セットアップ
+function observeInputAndButton() {
+  setupAutoSearchOnUserInput();
+  // 入力欄やボタンが動的に変わる場合にも対応
+  const observer = new MutationObserver(() => {
+    setupAutoSearchOnUserInput();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// 初期化
+observeInputAndButton();
