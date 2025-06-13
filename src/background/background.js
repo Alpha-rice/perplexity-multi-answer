@@ -1,229 +1,266 @@
 /**
- * Perplexity自動クエリ統合レポート用バックグラウンドスクリプト（バグ修正版）
+ * Perplexity自動クエリ送信・複数回対応Content Script
  */
 
-const PERPLEXITY_URL = "https://www.perplexity.ai/";
-const MAX_RETRY = 3;
+const INPUT_SELECTORS = [
+  'textarea[placeholder*="Ask anything"]',
+  'textarea[placeholder*="質問"]',
+  'textarea[data-testid="search-input"]',
+  'textarea[name="q"]',
+  'input[type="text"][placeholder*="Ask"]',
+  'div[contenteditable="true"]'
+];
 
-// グローバル状態をバッチ単位で管理
-let currentBatch = null;
+const SEND_BUTTON_SELECTORS = [
+  'button[aria-label="Send"]',
+  'button[aria-label="送信"]',
+  'button[type="submit"]',
+  'button:has(svg)',
+  '[data-testid="send-button"]'
+];
 
-// タブクローズ時のリスナー/状態クリーンアップ
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (currentBatch) {
-    // クエリタブ
-    if (currentBatch.tabListeners.has(tabId)) {
-      chrome.tabs.onUpdated.removeListener(currentBatch.tabListeners.get(tabId));
-      currentBatch.tabListeners.delete(tabId);
-    }
-    // 統合レポートタブ
-    if (currentBatch.reportTabId === tabId) {
-      currentBatch.reportTabId = null;
-    }
+const ANSWER_CONTAINER_SELECTORS = [
+  'main [data-testid="conversation-turn"]',
+  '[data-testid="answer"]',
+  '.answer-container',
+  '[role="main"] > div',
+  'main > div > div'
+];
+
+// 進行中の監視を管理
+let currentObserver = null;
+let currentStableTimeout = null;
+let currentTimeoutTimer = null;
+
+// 直近のクエリを記録し、重複送信を防ぐ
+let lastSentQuery = '';
+
+function findElement(selectors) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element) return element;
   }
-});
+  return null;
+}
 
-// 拡張機能インストール時の初期化
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'perplexity-multi-query',
-    title: 'Perplexity複数クエリ実行',
-    contexts: ['page', 'selection']
-  });
-});
+async function sendQueryAndGetAnswer(query) {
+  try {
+    // 進行中の監視をキャンセル
+    if (currentObserver) {
+      currentObserver.disconnect();
+      currentObserver = null;
+    }
+    if (currentStableTimeout) {
+      clearTimeout(currentStableTimeout);
+      currentStableTimeout = null;
+    }
+    if (currentTimeoutTimer) {
+      clearTimeout(currentTimeoutTimer);
+      currentTimeoutTimer = null;
+    }
 
-// コンテキストメニューのクリック処理
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'perplexity-multi-query') {
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'public/icon128.png',
-      title: 'Perplexity拡張機能',
-      message: '拡張機能のアイコンをクリックしてポップアップを開いてください'
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.warn('通知エラー:', chrome.runtime.lastError.message);
+    const input = findElement(INPUT_SELECTORS);
+    if (!input) throw new Error('Perplexityの入力欄が見つかりません（未ログインの可能性あり）');
+
+    input.focus();
+
+    // contenteditableの場合
+    if (input.contentEditable === 'true') {
+      input.textContent = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.textContent = query;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.value = query;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // 送信ボタンが有効になるまで最大10回再取得
+    let sendBtn = null;
+    let attempts = 0;
+    while (attempts < 10) {
+      sendBtn = findElement(SEND_BUTTON_SELECTORS);
+      if (sendBtn && !sendBtn.disabled) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+      attempts++;
+    }
+    if (!sendBtn || sendBtn.disabled) throw new Error('送信ボタンが有効になりません');
+
+    sendBtn.click();
+
+    lastSentQuery = query; // 直近のクエリを記録
+
+    const answer = await waitForAnswer();
+    return answer;
+  } catch (err) {
+    throw err;
+  }
+}
+
+// 回答監視（タイムアウトはsetTimeoutで確実に発火）
+function waitForAnswer(timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    let lastAnswer = '';
+    let finished = false;
+
+    // タイムアウト監視
+    currentTimeoutTimer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      if (currentObserver) currentObserver.disconnect();
+      if (currentStableTimeout) clearTimeout(currentStableTimeout);
+      reject(new Error('回答の取得にタイムアウトしました'));
+    }, timeoutMs);
+
+    currentObserver = new MutationObserver(() => {
+      if (finished) return;
+
+      let answerNodes = [];
+      for (const selector of ANSWER_CONTAINER_SELECTORS) {
+        const nodes = document.querySelectorAll(selector);
+        if (nodes.length > 0) {
+          answerNodes = Array.from(nodes);
+          break;
+        }
+      }
+
+      if (answerNodes.length > 0) {
+        const lastNode = answerNodes[answerNodes.length - 1];
+        const text = lastNode.innerText.trim();
+        if (text && text !== lastAnswer && text.length > 10) {
+          lastAnswer = text;
+          if (currentStableTimeout) clearTimeout(currentStableTimeout);
+          currentStableTimeout = setTimeout(() => {
+            if (finished) return;
+            finished = true;
+            if (currentObserver) currentObserver.disconnect();
+            if (currentTimeoutTimer) clearTimeout(currentTimeoutTimer);
+            resolve(lastAnswer);
+          }, 3000);
+        }
       }
     });
-  }
-});
 
-// ポップアップからのメッセージ受信
+    currentObserver.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+// メッセージ経由での複数クエリ送信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "START_PERPLEXITY_QUERIES") {
-    // 既存バッチが進行中なら拒否
-    if (currentBatch && !currentBatch.finished) {
-      sendResponse({ status: "error", error: "前回のバッチがまだ処理中です" });
-      return true;
+  let responded = false;
+  // タイムアウト保険（例: 70秒×クエリ数後に強制応答）
+  const timeoutMs = Math.max(70000, 70000 * (message.queries ? message.queries.length : 1));
+  const failSafeTimer = setTimeout(() => {
+    if (!responded) {
+      responded = true;
+      sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
     }
-    // バッチ状態初期化
-    currentBatch = {
-      queries: [...message.queries],
-      answers: new Array(message.queries.length).fill(null),
-      retryCounts: new Map(),
-      tabIdToIdx: new Map(),
-      tabListeners: new Map(),
-      integratePrompt: message.prompt,
-      reportTabId: null,
-      finished: false,
-      batchStart: Date.now()
-    };
+  }, timeoutMs);
 
-    // クエリごとにタブを開く
-    currentBatch.queries.forEach((query, idx) => {
-      openPerplexityTab(query, idx, 0);
-    });
+  (async () => {
+    try {
+      if (message.type === 'PERPLEXITY_SEND_QUERY' && Array.isArray(message.queries) && message.queries.length > 0) {
+        const answers = [];
+        for (let i = 0; i < message.queries.length; i++) {
+          const q = message.queries[i];
+          try {
+            const answer = await sendQueryAndGetAnswer(q);
+            answers.push(answer);
+          } catch (err) {
+            answers.push({ error: err && err.message ? err.message : String(err) });
+          }
+          // Perplexity側のUIが落ち着くまで少し待つ
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'ok', answers });
+        }
+      } else if (message.type === 'PERPLEXITY_SEND_QUERY' && typeof message.query === 'string') {
+        // 互換: 単一クエリ
+        try {
+          const answer = await sendQueryAndGetAnswer(message.query);
+          if (!responded) {
+            responded = true;
+            clearTimeout(failSafeTimer);
+            sendResponse({ status: 'ok', answers: [answer] });
+          }
+        } catch (err) {
+          if (!responded) {
+            responded = true;
+            clearTimeout(failSafeTimer);
+            sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
+          }
+        }
+      } else {
+        if (!responded) {
+          responded = true;
+          clearTimeout(failSafeTimer);
+          sendResponse({ status: 'error', message: '不正なリクエスト' });
+        }
+      }
+    } catch (err) {
+      if (!responded) {
+        responded = true;
+        clearTimeout(failSafeTimer);
+        sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) });
+      }
+    }
+  })();
 
-    sendResponse({ status: "ok" });
-    return true;
-  }
+  return true; // 非同期応答のため必須
 });
 
-// Perplexityタブを開き、content scriptにクエリ送信
-function openPerplexityTab(query, idx, retry) {
-  chrome.tabs.create({ url: PERPLEXITY_URL, active: false }, (tab) => {
-    if (!currentBatch) return;
-    currentBatch.tabIdToIdx.set(tab.id, idx);
-    currentBatch.retryCounts.set(tab.id, retry);
+// --- ここから自動検索イベントリスナー追加 ---
 
-    let sent = false;
-    const listener = function (tabId, info) {
-      if (sent) return;
-      if (tabId === tab.id && info.status === "complete") {
-        sent = true;
-        chrome.tabs.onUpdated.removeListener(listener);
-        currentBatch.tabListeners.delete(tab.id);
+function setupAutoSearchOnUserInput() {
+  const input = findElement(INPUT_SELECTORS);
+  if (!input) return;
 
-        chrome.tabs.sendMessage(
-          tab.id,
-          { type: "PERPLEXITY_SEND_QUERY", query },
-          () => { /* 応答不要 */ }
-        );
+  // すでにイベントが設定されていれば重複しないように
+  if (input._perplexityAutoSearchSetup) return;
+  input._perplexityAutoSearchSetup = true;
+
+  // Enterキーで送信（Shift+Enterは改行）
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+      if (query && query !== lastSentQuery) {
+        sendQueryAndGetAnswer(query);
+        e.preventDefault();
       }
-    };
-    currentBatch.tabListeners.set(tab.id, listener);
-    chrome.tabs.onUpdated.addListener(listener);
-  });
-}
-
-// content scriptからの回答・エラー受信
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!currentBatch || !sender.tab) return;
-  const tabId = sender.tab.id;
-  if (message.type === "PERPLEXITY_ANSWER") {
-    handleAnswer(tabId, message.answer);
-  } else if (message.type === "PERPLEXITY_ERROR") {
-    handleError(tabId, message.message);
-  }
-});
-
-// 回答受信処理
-function handleAnswer(tabId, answer) {
-  if (!currentBatch || !currentBatch.tabIdToIdx.has(tabId)) return;
-  const idx = currentBatch.tabIdToIdx.get(tabId);
-  currentBatch.answers[idx] = answer;
-
-  // タブを閉じる＆リスナー解除
-  chrome.tabs.remove(tabId, () => {
-    if (currentBatch.tabListeners.has(tabId)) {
-      chrome.tabs.onUpdated.removeListener(currentBatch.tabListeners.get(tabId));
-      currentBatch.tabListeners.delete(tabId);
     }
-    currentBatch.tabIdToIdx.delete(tabId);
-    currentBatch.retryCounts.delete(tabId);
   });
 
-  // すべての回答が揃ったら統合プロンプト送信
-  if (currentBatch.answers.every(ans => ans !== null) && !currentBatch.finished) {
-    currentBatch.finished = true;
-    sendIntegratePrompt();
+  // 送信ボタン押下時にも自動送信（ユーザーが直接ボタンを押した場合）
+  const sendBtn = findElement(SEND_BUTTON_SELECTORS);
+  if (sendBtn && !sendBtn._perplexityAutoSearchSetup) {
+    sendBtn._perplexityAutoSearchSetup = true;
+    sendBtn.addEventListener('click', function() {
+      const query = input.contentEditable === 'true' ? input.textContent.trim() : input.value.trim();
+      if (query && query !== lastSentQuery) {
+        sendQueryAndGetAnswer(query);
+      }
+    });
   }
 }
 
-// エラー受信・リトライ処理
-function handleError(tabId, errorMsg) {
-  if (!currentBatch || !currentBatch.tabIdToIdx.has(tabId)) return;
-  const idx = currentBatch.tabIdToIdx.get(tabId);
-  const retry = currentBatch.retryCounts.get(tabId) || 0;
-  if (retry < MAX_RETRY) {
-    // タブを閉じてリトライ
-    chrome.tabs.remove(tabId, () => {
-      if (currentBatch.tabListeners.has(tabId)) {
-        chrome.tabs.onUpdated.removeListener(currentBatch.tabListeners.get(tabId));
-        currentBatch.tabListeners.delete(tabId);
-      }
-      currentBatch.tabIdToIdx.delete(tabId);
-      currentBatch.retryCounts.delete(tabId);
-      openPerplexityTab(currentBatch.queries[idx], idx, retry + 1);
-    });
-  } else {
-    // リトライ上限→エラーログ保存
-    saveErrorLog({ tabId, errorMsg, time: new Date().toISOString() });
-    chrome.tabs.remove(tabId, () => {
-      if (currentBatch.tabListeners.has(tabId)) {
-        chrome.tabs.onUpdated.removeListener(currentBatch.tabListeners.get(tabId));
-        currentBatch.tabListeners.delete(tabId);
-      }
-      currentBatch.tabIdToIdx.delete(tabId);
-      currentBatch.retryCounts.delete(tabId);
-    });
-    chrome.notifications.create({
-      type: "basic",
-      iconUrl: "public/icon128.png",
-      title: "Perplexity拡張エラー",
-      message: `クエリ${idx + 1}でエラー: ${errorMsg}`,
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.warn('通知エラー:', chrome.runtime.lastError.message);
-      }
-    });
-    // 回答欄はnullのまま→バッチ完了判定
-    if (currentBatch.answers.every(ans => ans !== null) && !currentBatch.finished) {
-      currentBatch.finished = true;
-      sendIntegratePrompt();
-    }
-  }
-}
-
-// 統合プロンプト送信
-function sendIntegratePrompt() {
-  if (!currentBatch) return;
-  const combined = currentBatch.answers
-    .map((ans, i) => `【クエリ${i + 1}の回答】\n${ans}`)
-    .join("\n\n");
-  const finalPrompt = `${combined}\n\n${currentBatch.integratePrompt}`;
-
-  chrome.tabs.create({ url: PERPLEXITY_URL, active: true }, (tab) => {
-    currentBatch.reportTabId = tab.id;
-    let sent = false;
-    const listener = function (tabId, info) {
-      if (sent) return;
-      if (tabId === tab.id && info.status === "complete") {
-        sent = true;
-        chrome.tabs.onUpdated.removeListener(listener);
-        currentBatch.tabListeners.delete(tab.id);
-
-        chrome.tabs.sendMessage(
-          tab.id,
-          { type: "PERPLEXITY_SEND_QUERY", query: finalPrompt },
-          () => { /* 応答不要 */ }
-        );
-      }
-    };
-    currentBatch.tabListeners.set(tab.id, listener);
-    chrome.tabs.onUpdated.addListener(listener);
+// ページロード時と動的DOM変化時に監視して自動セットアップ
+function observeInputAndButton() {
+  setupAutoSearchOnUserInput();
+  // 入力欄やボタンが動的に変わる場合にも対応
+  const observer = new MutationObserver(() => {
+    setupAutoSearchOnUserInput();
   });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// エラーログ保存（chrome.storage.local）
-function saveErrorLog(log) {
-  chrome.storage.local.get({ errorLogs: [] }, (data) => {
-    const logs = Array.isArray(data.errorLogs) ? data.errorLogs : [];
-    logs.push(log);
-    chrome.storage.local.set({ errorLogs: logs }, () => {
-      if (chrome.runtime.lastError) {
-        console.warn('エラーログ保存失敗:', chrome.runtime.lastError.message);
-      }
-    });
-  });
-}
+// 初期化
+observeInputAndButton();
