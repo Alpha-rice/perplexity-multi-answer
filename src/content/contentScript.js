@@ -146,9 +146,11 @@ function waitForAnswer(timeoutMs = 60000) {
     currentObserver.observe(document.body, { childList: true, subtree: true });
   });
 }
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'PERPLEXITY_SEND_QUERY' && message.query) {
-    sendQueryAndGetAnswer(message.query);
+    sendQueryAndGetAnswer(message.query)
+      .then(() => sendResponse({ status: 'ok' }))
+      .catch(err => sendResponse({ status: 'error', message: err && err.message ? err.message : String(err) }));
+    return true; // 非同期応答のため必須
   }
 });
