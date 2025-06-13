@@ -57,6 +57,7 @@ export function validateIntegratePrompt(prompt) {
 // クエリと回答の統合
 export function combineQueriesAndAnswers(queries, answers, integratePrompt) {
   if (!queries || !answers || queries.length !== answers.length) {
+    // 呼び出し元でtry-catchすることを推奨
     throw new Error('クエリと回答の数が一致しません');
   }
   
@@ -78,7 +79,7 @@ export function checkDuplicateQueries(queries) {
   const duplicates = [];
   
   queries.forEach((query, index) => {
-    const normalized = query.toLowerCase().trim();
+    const normalized = (query || '').toLowerCase().trim();
     if (seen.has(normalized)) {
       duplicates.push({ index, query });
     } else {
