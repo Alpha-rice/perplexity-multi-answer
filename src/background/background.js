@@ -12,6 +12,29 @@ let reportTabId = null;
 let queries = []; // クエリ内容を保持
 let tabListeners = {}; // タブごとのリスナー参照を保持
 
+// 拡張機能インストール時の初期化
+chrome.runtime.onInstalled.addListener(() => {
+  // コンテキストメニューの作成
+  chrome.contextMenus.create({
+    id: 'perplexity-multi-query',
+    title: 'Perplexity複数クエリ実行',
+    contexts: ['page', 'selection']
+  });
+});
+
+// コンテキストメニューのクリック処理
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'perplexity-multi-query') {
+    // ポップアップを開く（代替手段として通知を表示）
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'Perplexity拡張機能',
+      message: '拡張機能のアイコンをクリックしてポップアップを開いてください'
+    });
+  }
+});
+
 // ポップアップからのメッセージ受信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START_PERPLEXITY_QUERIES") {
@@ -127,7 +150,7 @@ function handleError(tabId, errorMsg) {
     // ポップアップ通知（manifestのパスに合わせて修正）
     chrome.notifications.create({
       type: "basic",
-      iconUrl: "public/icon128.png",
+      iconUrl: "icons/icon128.png",
       title: "Perplexity拡張エラー",
       message: `クエリ${idx + 1}でエラー: ${errorMsg}`,
     });
