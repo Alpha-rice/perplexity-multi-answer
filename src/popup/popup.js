@@ -15,13 +15,15 @@ document.addEventListener('DOMContentLoaded', () => {
     errorLog.push(entry);
     try {
       localStorage.setItem('perplexity_error_log', JSON.stringify(errorLog));
+      console.log('[popup] エラーログ保存:', entry);
     } catch (e) {
-      // 保存失敗時は無視
+      console.error('[popup] エラーログ保存失敗:', e);
     }
   }
 
   // エラーメッセージ表示
   function showError(msg) {
+    console.error('[popup] showError:', msg);
     errorMessage.textContent = msg;
     errorMessage.style.display = 'block';
     statusMessage.style.display = 'none';
@@ -29,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ステータスメッセージ表示
   function showStatus(msg) {
+    console.log('[popup] showStatus:', msg);
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
     errorMessage.style.display = 'none';
@@ -42,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // UIロック
   function lockUI() {
+    console.log('[popup] UIロック');
     executeBtn.disabled = true;
     queryTextarea.disabled = true;
     promptTextarea.disabled = true;
@@ -51,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // UIアンロック
   function unlockUI() {
+    console.log('[popup] UIアンロック');
     executeBtn.disabled = false;
     queryTextarea.disabled = false;
     promptTextarea.disabled = false;
@@ -65,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
       let lastError = null;
 
       function trySend() {
+        console.log(`[popup] クエリ送信試行: ${attempts + 1}/${retryCount}`, { queries, prompt });
         chrome.runtime.sendMessage(
           {
             type: 'START_PERPLEXITY_QUERIES',
@@ -74,6 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
           (response) => {
             if (chrome.runtime.lastError) {
               lastError = chrome.runtime.lastError.message;
+              console.error('[popup] chrome.runtime.lastError:', lastError);
               attempts++;
               if (attempts < retryCount) {
                 showStatus(`通信エラー。リトライ中...（${attempts}/${retryCount}）`);
@@ -83,10 +90,12 @@ document.addEventListener('DOMContentLoaded', () => {
               }
               return;
             }
+            console.log('[popup] 受信response:', response);
             if (response && response.status === 'ok') {
               resolve();
             } else if (response && response.error) {
               lastError = response.error;
+              console.error('[popup] response.error:', lastError);
               attempts++;
               if (attempts < retryCount) {
                 showStatus(`エラー発生。リトライ中...（${attempts}/${retryCount}）`);
@@ -96,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
               }
             } else {
               lastError = '不明なエラーが発生しました';
+              console.error('[popup] 不明なエラー:', response);
               attempts++;
               if (attempts < retryCount) {
                 showStatus(`不明なエラー。リトライ中...（${attempts}/${retryCount}）`);
@@ -118,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (isSending) {
       // 多重送信防止
+      console.warn('[popup] 送信中のため無視');
       return;
     }
 
@@ -172,8 +183,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = localStorage.getItem('perplexity_error_log');
     if (stored) {
       errorLog = JSON.parse(stored);
+      console.log('[popup] エラーログ初期化:', errorLog);
     }
   } catch (e) {
     errorLog = [];
+    console.error('[popup] エラーログ初期化失敗:', e);
   }
 });

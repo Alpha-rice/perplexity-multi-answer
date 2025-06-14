@@ -1,5 +1,5 @@
 /**
- * Perplexity 自動クエリ送信・複数回対応 Content Script（堅牢・最新パターン）
+ * Perplexity 自動クエリ送信・複数回対応 Content Script（デバッグ用ログ追加）
  */
 
 const INPUT_SELECTORS = [
@@ -53,8 +53,10 @@ async function sendQueryAndGetAnswer(query) {
   currentObserver = currentStableTimeout = currentTimeoutTimer = null;
 
   const input = findElement(INPUT_SELECTORS);
-  if (!input)
+  if (!input) {
+    console.warn('[CS] Perplexity の入力欄が見つかりません');
     throw new Error('Perplexity の入力欄が見つかりません（未ログイン？）');
+  }
 
   input.focus();
 
@@ -81,8 +83,10 @@ async function sendQueryAndGetAnswer(query) {
     if (sendBtn && !sendBtn.disabled) break;
     await delay(150);
   }
-  if (!sendBtn || sendBtn.disabled)
+  if (!sendBtn || sendBtn.disabled) {
+    console.warn('[CS] 送信ボタンが有効になりません');
     throw new Error('送信ボタンが有効になりません');
+  }
 
   sendBtn.click();
   lastSentQuery = query;
@@ -105,48 +109,62 @@ function waitForAnswer(timeoutMs = 60000) {
     currentTimeoutTimer = setTimeout(() => {
       if (!finished) {
         cleanup();
+        console.error('[CS] 回答取得がタイムアウト');
         reject(new Error('回答取得がタイムアウト'));
       }
     }, timeoutMs);
 
-    currentObserver = new MutationObserver(() => {
-      if (finished) return;
+    try {
+      currentObserver = new MutationObserver(() => {
+        if (finished) return;
 
-      for (const sel of ANSWER_CONTAINER_SELECTORS) {
-        const nodes = document.querySelectorAll(sel);
-        if (!nodes?.length) continue;
+        for (const sel of ANSWER_CONTAINER_SELECTORS) {
+          const nodes = document.querySelectorAll(sel);
+          if (!nodes?.length) continue;
 
-        const text = nodes[nodes.length - 1].innerText.trim();
-        if (text && text !== lastAnswer && text.length > 10) {
-          lastAnswer = text;
-          if (currentStableTimeout) clearTimeout(currentStableTimeout);
-          currentStableTimeout = setTimeout(() => {
-            if (!finished) {
-              cleanup();
-              resolve(lastAnswer);
-            }
-          }, 2500);
+          const text = nodes[nodes.length - 1].innerText.trim();
+          if (text && text !== lastAnswer && text.length > 10) {
+            lastAnswer = text;
+            if (currentStableTimeout) clearTimeout(currentStableTimeout);
+            currentStableTimeout = setTimeout(() => {
+              if (!finished) {
+                cleanup();
+                console.log('[CS] 回答取得:', lastAnswer);
+                resolve(lastAnswer);
+              }
+            }, 2500);
+          }
+          break;
         }
-        break;
-      }
-    });
+      });
 
-    currentObserver.observe(document.body, { childList: true, subtree: true });
+      currentObserver.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {
+      console.error('[CS] MutationObserver error:', e);
+      cleanup();
+      reject(e);
+    }
   });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('[CS] onMessage received:', message);
+
   const isHandled =
     message?.type === 'PERPLEXITY_SEND_QUERY' &&
     (Array.isArray(message.queries) || typeof message.query === 'string');
 
-  if (!isHandled) return; // 対象外は同期終了
+  if (!isHandled) {
+    console.warn('[CS] onMessage: type not handled:', message?.type);
+    return;
+  }
 
   let responded = false;
   const timeoutMs = Math.max(70000, 70000 * (message.queries?.length || 1));
   const failSafe = setTimeout(() => {
     if (!responded) {
       responded = true;
+      console.error('[CS] 応答タイムアウト');
       sendResponse({ status: 'error', message: 'contentScript: 応答タイムアウト' });
     }
   }, timeoutMs);
@@ -162,6 +180,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
           answers.push(await sendQueryAndGetAnswer(q));
         } catch (e) {
+          console.error('[CS] sendQueryAndGetAnswer failed:', e);
           answers.push({ error: e?.message || String(e) });
         }
         await delay(900); // UI 安定待ち
@@ -170,12 +189,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!responded) {
         responded = true;
         clearTimeout(failSafe);
+        console.log('[CS] sendResponse (ok):', { status: 'ok', answers });
         sendResponse({ status: 'ok', answers });
       }
     } catch (e) {
+      console.error('[CS] Exception in onMessage handler:', e);
       if (!responded) {
         responded = true;
         clearTimeout(failSafe);
+        console.log('[CS] sendResponse (error):', e?.message || String(e));
         sendResponse({ status: 'error', message: e?.message || String(e) });
       }
     }
@@ -196,6 +218,7 @@ function setupAutoSearch() {
           ? input.textContent.trim()
           : input.value.trim();
       if (query && query !== lastSentQuery) {
+        console.log('[CS] AutoSearch: Enterで送信:', query);
         sendQueryAndGetAnswer(query);
         e.preventDefault();
       }
@@ -211,6 +234,7 @@ function setupAutoSearch() {
           ? input.textContent.trim()
           : input.value.trim();
       if (query && query !== lastSentQuery) {
+        console.log('[CS] AutoSearch: ボタンで送信:', query);
         sendQueryAndGetAnswer(query);
       }
     });
