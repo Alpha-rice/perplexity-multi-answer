@@ -93,23 +93,33 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('[popup] 受信response:', response);
             if (response && response.status === 'ok') {
               resolve();
+            } else if (response && response.status === 'error') {
+              lastError = response.message || 'エラーが発生しました';
+              console.error('[popup] response.error:', lastError);
+              attempts++;
+              if (attempts < retryCount) {
+                showStatus(`エラー発生。リトライ中...（${attempts}/${retryCount}）`);
+                setTimeout(trySend, 2000); // Increased retry delay
+              } else {
+                reject(lastError);
+              }
             } else if (response && response.error) {
               lastError = response.error;
               console.error('[popup] response.error:', lastError);
               attempts++;
               if (attempts < retryCount) {
                 showStatus(`エラー発生。リトライ中...（${attempts}/${retryCount}）`);
-                setTimeout(trySend, 1000);
+                setTimeout(trySend, 2000);
               } else {
                 reject(lastError);
               }
             } else {
-              lastError = '不明なエラーが発生しました';
+              lastError = response ? `予期しない応答: ${JSON.stringify(response)}` : '不明なエラーが発生しました';
               console.error('[popup] 不明なエラー:', response);
               attempts++;
               if (attempts < retryCount) {
                 showStatus(`不明なエラー。リトライ中...（${attempts}/${retryCount}）`);
-                setTimeout(trySend, 1000);
+                setTimeout(trySend, 2000);
               } else {
                 reject(lastError);
               }

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perplexity Extension Debug</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>Perplexity Extension Debug Tool</h1>
+    
+    <div class="section">
+        <h2>Extension Status</h2>
+        <button onclick="checkExtension()">Check Extension</button>
+        <button onclick="checkTabs()">Check Perplexity Tabs</button>
+        <button onclick="testContentScript()">Test Content Script</button>
+        <div id="status-log" class="log"></div>
+    </div>
+
+    <div class="section">
+        <h2>Test Query</h2>
+        <textarea id="test-query" rows="3" cols="50" placeholder="Enter test query...">What is artificial intelligence?</textarea><br>
+        <textarea id="test-prompt" rows="3" cols="50" placeholder="Enter integration prompt...">Please summarize the key points from these responses.</textarea><br>
+        <input type="number" id="test-count" value="2" min="1" max="5"> queries<br>
+        <button onclick="sendTestQuery()">Send Test Query</button>
+        <div id="query-log" class="log"></div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('status-log');
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            logElement.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function queryLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('query-log');
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            logElement.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function checkExtension() {
+            log('Checking extension availability...');
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                log('Chrome extension API available', 'success');
+                log(`Extension ID: ${chrome.runtime.id}`);
+            } else {
+                log('Chrome extension API not available', 'error');
+            }
+        }
+
+        function checkTabs() {
+            log('Checking for Perplexity tabs...');
+            if (typeof chrome !== 'undefined' && chrome.tabs) {
+                chrome.tabs.query({ url: ['*://www.perplexity.ai/*', '*://perplexity.ai/*'] }, (tabs) => {
+                    if (chrome.runtime.lastError) {
+                        log(`Error querying tabs: ${chrome.runtime.lastError.message}`, 'error');
+                        return;
+                    }
+                    log(`Found ${tabs.length} Perplexity tabs`, 'success');
+                    tabs.forEach((tab, index) => {
+                        log(`Tab ${index + 1}: ${tab.url} (ID: ${tab.id}, Status: ${tab.status})`);
+                    });
+                });
+            } else {
+                log('Chrome tabs API not available', 'error');
+            }
+        }
+
+        function testContentScript() {
+            log('Testing content script communication...');
+            if (typeof chrome !== 'undefined' && chrome.tabs) {
+                chrome.tabs.query({ url: ['*://www.perplexity.ai/*', '*://perplexity.ai/*'] }, (tabs) => {
+                    if (chrome.runtime.lastError) {
+                        log(`Error querying tabs: ${chrome.runtime.lastError.message}`, 'error');
+                        return;
+                    }
+                    if (tabs.length === 0) {
+                        log('No Perplexity tabs found', 'error');
+                        return;
+                    }
+                    
+                    const tab = tabs[0];
+                    log(`Testing content script in tab: ${tab.id}`);
+                    
+                    chrome.tabs.sendMessage(tab.id, { type: 'PING' }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            log(`Content script test failed: ${chrome.runtime.lastError.message}`, 'error');
+                        } else if (response && response.status === 'PONG') {
+                            log('Content script is responding correctly', 'success');
+                        } else {
+                            log(`Unexpected response: ${JSON.stringify(response)}`, 'error');
+                        }
+                    });
+                });
+            } else {
+                log('Chrome tabs API not available', 'error');
+            }
+        }
+
+        function sendTestQuery() {
+            const query = document.getElementById('test-query').value.trim();
+            const prompt = document.getElementById('test-prompt').value.trim();
+            const count = parseInt(document.getElementById('test-count').value);
+
+            if (!query || !prompt) {
+                queryLog('Please enter both query and prompt', 'error');
+                return;
+            }
+
+            queryLog('Sending test query...');
+            const queries = Array(count).fill(query);
+
+            chrome.runtime.sendMessage({
+                type: 'START_PERPLEXITY_QUERIES',
+                queries: queries,
+                prompt: prompt
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    queryLog(`Runtime error: ${chrome.runtime.lastError.message}`, 'error');
+                } else if (response) {
+                    if (response.status === 'ok') {
+                        queryLog('Query sent successfully!', 'success');
+                        queryLog(`Response: ${JSON.stringify(response, null, 2)}`);
+                    } else {
+                        queryLog(`Error response: ${response.message || JSON.stringify(response)}`, 'error');
+                    }
+                } else {
+                    queryLog('No response received', 'error');
+                }
+            });
+        }
+
+        // Auto-check extension on load
+        window.addEventListener('load', () => {
+            checkExtension();
+        });
+    </script>
+</body>
+</html>
