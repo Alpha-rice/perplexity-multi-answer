@@ -1,7 +1,7 @@
 /**
  * Perplexity 自動クエリ送信・複数回対応 Content Script（デバッグ用ログ追加）
  */
-
+console.log('[CS] content script loaded:', window.location.href);
 const INPUT_SELECTORS = [
   'textarea[placeholder*="Ask anything"]',
   'textarea[placeholder*="質問"]',
