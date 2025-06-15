@@ -36,6 +36,115 @@ async function ensureContentScriptInjected(tabId) {
   }
 }
 
+// Function to create multiple new Perplexity tabs and send queries simultaneously
+async function createMultipleTabsAndSendQueries(queries, prompt) {
+  console.log('[BG] Creating multiple tabs for queries:', queries.length);
+  
+  try {
+    const tabPromises = queries.map(async (query, index) => {
+      console.log(`[BG] Creating tab ${index + 1} for query:`, query);
+      
+      // Create new tab
+      const tab = await new Promise((resolve, reject) => {
+        chrome.tabs.create({ 
+          url: 'https://www.perplexity.ai/',
+          active: false // Don't switch to the tab
+        }, (newTab) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(newTab);
+          }
+        });
+      });
+
+      console.log(`[BG] Tab ${index + 1} created:`, tab.id);
+
+      // Wait for tab to load
+      await new Promise((resolve) => {
+        const checkTabStatus = () => {
+          chrome.tabs.get(tab.id, (updatedTab) => {
+            if (chrome.runtime.lastError) {
+              console.error(`[BG] Error checking tab ${tab.id}:`, chrome.runtime.lastError);
+              resolve(); // Continue anyway
+            } else if (updatedTab.status === 'complete') {
+              console.log(`[BG] Tab ${index + 1} loaded successfully`);
+              resolve();
+            } else {
+              setTimeout(checkTabStatus, 500);
+            }
+          });
+        };
+        checkTabStatus();
+      });
+
+      // Additional wait for page to fully initialize
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Ensure content script is injected
+      const injectionSuccess = await ensureContentScriptInjected(tab.id);
+      if (!injectionSuccess) {
+        throw new Error(`Content script injection failed for tab ${index + 1}`);
+      }
+
+      // Send query to the tab
+      const response = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(
+          tab.id,
+          {
+            type: 'PERPLEXITY_SEND_SINGLE_QUERY',
+            query: query,
+            tabIndex: index + 1
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(`Tab ${index + 1}: ${chrome.runtime.lastError.message}`));
+            } else if (typeof response === 'undefined') {
+              reject(new Error(`Tab ${index + 1}: Content script did not respond`));
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      return {
+        tabIndex: index + 1,
+        query: query,
+        tabId: tab.id,
+        response: response
+      };
+    });
+
+    // Wait for all queries to complete
+    const results = await Promise.allSettled(tabPromises);
+    
+    const successfulResults = [];
+    const errors = [];
+
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        successfulResults.push(result.value);
+      } else {
+        errors.push(`Query ${index + 1}: ${result.reason.message}`);
+      }
+    });
+
+    console.log('[BG] All queries completed. Successful:', successfulResults.length, 'Errors:', errors.length);
+
+    return {
+      status: 'ok',
+      results: successfulResults,
+      errors: errors,
+      prompt: prompt
+    };
+
+  } catch (error) {
+    console.error('[BG] Error in createMultipleTabsAndSendQueries:', error);
+    throw error;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[BG] onMessage received:', message);
 
@@ -44,81 +153,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     Array.isArray(message.queries) &&
     typeof message.prompt === 'string'
   ) {
-    console.log('[BG] START_PERPLEXITY_QUERIES accepted. Looking for Perplexity tab...');
+    console.log('[BG] START_PERPLEXITY_QUERIES accepted. Creating multiple tabs...');
     
-    // Query for both www.perplexity.ai and perplexity.ai
-    chrome.tabs.query({ 
-      url: ['*://www.perplexity.ai/*', '*://perplexity.ai/*'] 
-    }, async (tabs) => {
-      if (chrome.runtime.lastError) {
-        console.error('[BG] tabs.query error:', chrome.runtime.lastError);
-        sendResponse({ status: 'error', message: chrome.runtime.lastError.message });
-        return;
-      }
-      console.log('[BG] tabs.query result:', tabs);
-
-      // Filter for active/loaded tabs
-      const activeTabs = tabs.filter(tab => 
-        tab.status === 'complete' && 
-        tab.url && 
-        (tab.url.includes('perplexity.ai'))
-      );
-
-      if (activeTabs.length === 0) {
-        console.error('[BG] No active Perplexity tab found.');
-        sendResponse({ status: 'error', message: 'アクティブなPerplexityタブが見つかりません。Perplexity.aiを開いてから再試行してください。' });
-        return;
-      }
-
-      const tab = activeTabs[0];
-      console.log('[BG] Using tab:', tab.id, tab.url);
-
-      try {
-        // Ensure content script is injected and ready
-        const injectionSuccess = await ensureContentScriptInjected(tab.id);
-        if (!injectionSuccess) {
-          sendResponse({ 
-            status: 'error', 
-            message: 'Content scriptの注入に失敗しました。タブを更新してから再試行してください。' 
-          });
-          return;
-        }
-
-        console.log('[BG] Sending message to content script in tab:', tab.id);
-        chrome.tabs.sendMessage(
-          tab.id,
-          {
-            type: 'PERPLEXITY_SEND_QUERY',
-            queries: message.queries,
-            prompt: message.prompt
-          },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('[BG] tabs.sendMessage error:', chrome.runtime.lastError);
-              sendResponse({ 
-                status: 'error', 
-                message: `通信エラー: ${chrome.runtime.lastError.message}. タブを更新してから再試行してください。` 
-              });
-            } else if (typeof response === 'undefined') {
-              console.error('[BG] Content script did not respond (response is undefined).');
-              sendResponse({ 
-                status: 'error', 
-                message: 'Content scriptから応答がありません。タブを更新してから再試行してください。' 
-              });
-            } else {
-              console.log('[BG] Received response from content script:', response);
-              sendResponse(response);
-            }
-          }
-        );
-      } catch (error) {
-        console.error('[BG] Error in message handling:', error);
+    // Use the new multiple tabs approach
+    createMultipleTabsAndSendQueries(message.queries, message.prompt)
+      .then((result) => {
+        console.log('[BG] Multiple queries completed successfully:', result);
+        sendResponse(result);
+      })
+      .catch((error) => {
+        console.error('[BG] Multiple queries failed:', error);
         sendResponse({ 
           status: 'error', 
-          message: `処理エラー: ${error.message}` 
+          message: `複数クエリ処理エラー: ${error.message}` 
         });
-      }
-    });
+      });
+
     return true; // 非同期応答
   } else {
     console.warn('[BG] Message type not handled:', message.type);

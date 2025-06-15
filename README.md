@@ -4,11 +4,12 @@ A Chrome extension that automatically sends multiple queries to Perplexity.ai an
 
 ## Features
 
-- Send the same query multiple times to Perplexity.ai
-- Automatic response collection
-- Integration prompt for summarizing results
-- Robust error handling and retry mechanisms
-- Debug tools for troubleshooting
+- **Multiple Tab Queries**: Automatically opens multiple new Perplexity.ai tabs and sends queries simultaneously
+- **Robust Input Method**: Uses advanced keyboard simulation and clipboard methods for reliable text input
+- **Real-time Results**: Collects responses from all tabs and displays them in a formatted results window
+- **Error Handling**: Comprehensive error handling with detailed logging and retry mechanisms
+- **Results Export**: Copy individual results or all results for integration with other tools
+- **Debug Tools**: Built-in debugging interface for troubleshooting
 
 ## Installation
 
@@ -20,11 +21,16 @@ A Chrome extension that automatically sends multiple queries to Perplexity.ai an
 
 ## Usage
 
-1. Open Perplexity.ai in a Chrome tab
-2. Click the extension icon to open the popup
-3. Enter your query and integration prompt
-4. Select how many times to send the query (2-5)
-5. Click "Execute" to start the process
+1. Click the extension icon to open the popup
+2. Enter your query and integration prompt
+3. Select how many times to send the query (2-5)
+4. Click "Execute" to start the process
+5. The extension will automatically:
+   - Open multiple new Perplexity.ai tabs
+   - Send the same query to each tab simultaneously
+   - Wait for responses from all tabs
+   - Display results in a formatted window
+6. Use the results window to copy individual responses or all results for further analysis
 
 ## Troubleshooting
 
