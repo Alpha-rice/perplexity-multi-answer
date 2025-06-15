@@ -41,7 +41,8 @@
         "https://*.perplexity.ai/*"
       ],
       "js": ["src/content/contentScript.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "options_page": "src/options/options.html",

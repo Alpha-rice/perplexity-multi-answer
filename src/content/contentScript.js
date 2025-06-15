@@ -2,6 +2,11 @@
  * Perplexity 自動クエリ送信・複数回対応 Content Script（デバッグ用ログ追加）
  */
 console.log('[CS] content script loaded:', window.location.href);
+
+// Ensure we're on a Perplexity page
+if (!window.location.href.includes('perplexity.ai')) {
+  console.warn('[CS] Not on Perplexity.ai, content script may not work properly');
+}
 const INPUT_SELECTORS = [
   'textarea[placeholder*="Ask anything"]',
   'textarea[placeholder*="質問"]',
@@ -150,6 +155,13 @@ function waitForAnswer(timeoutMs = 60000) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[CS] onMessage received:', message);
 
+  // Handle PING message for health check
+  if (message?.type === 'PING') {
+    console.log('[CS] PING received, responding with PONG');
+    sendResponse({ status: 'PONG' });
+    return;
+  }
+
   const isHandled =
     message?.type === 'PERPLEXITY_SEND_QUERY' &&
     (Array.isArray(message.queries) || typeof message.query === 'string');
@@ -248,4 +260,9 @@ function observeDomForInputs() {
 }
 
 // 初期化
-observeDomForInputs();
+try {
+  observeDomForInputs();
+  console.log('[CS] Content script initialization completed successfully');
+} catch (error) {
+  console.error('[CS] Content script initialization failed:', error);
+}

@@ -1,104 +1,148 @@
-# Perplexity Multi-Answer Chrome Extension
+# Perplexity Multi-Answer Extension
 
-A Chrome extension that automatically sends multiple queries to Perplexity AI and generates integrated reports from the responses.
-
-## Overview
-
-This extension allows you to submit 2-5 queries to Perplexity's Web UI simultaneously and automatically combines the responses into a comprehensive report using a custom integration prompt.
+A Chrome extension that automatically sends multiple queries to Perplexity.ai and collects the responses for analysis.
 
 ## Features
 
-- **Bulk Query Processing**: Submit multiple queries (2-5) to Perplexity at once
-- **Automatic Integration**: Combines all responses into a unified report
-- **Popup Interface**: Easy-to-use popup with query input and prompt customization
-- **Context Menu Integration**: Right-click access for quick activation
-- **Error Handling**: Automatic retry mechanism with error notifications
-- **Japanese Language Support**: Fully localized for Japanese users
+- Send the same query multiple times to Perplexity.ai
+- Automatic response collection
+- Integration prompt for summarizing results
+- Robust error handling and retry mechanisms
+- Debug tools for troubleshooting
 
 ## Installation
 
-### Manual Installation
-
-1. Download or clone this repository
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable "Developer mode" in the top right corner
+1. Clone or download this repository
+2. Open Chrome and go to `chrome://extensions/`
+3. Enable "Developer mode" in the top right
 4. Click "Load unpacked" and select the extension directory
-5. The extension icon should appear in your Chrome toolbar
+5. The extension icon should appear in your toolbar
 
 ## Usage
 
-### Prerequisites
+1. Open Perplexity.ai in a Chrome tab
+2. Click the extension icon to open the popup
+3. Enter your query and integration prompt
+4. Select how many times to send the query (2-5)
+5. Click "Execute" to start the process
 
-- You must be logged into [Perplexity AI](https://www.perplexity.ai/) before using this extension
-- The extension will show an error notification if you're not logged in
+## Troubleshooting
 
-### How to Use
+### Common Issues
 
-1. **Via Popup**: Click the extension icon in your toolbar
-2. **Via Context Menu**: Right-click on any webpage and select the extension option
-3. Enter your queries (one per line, 2-5 queries maximum)
-4. Customize the integration prompt if needed
-5. Click submit to process all queries automatically
+#### "Content script communication error"
 
-The extension will:
-- Open new tabs for each query
-- Automatically submit them to Perplexity
-- Collect all responses
-- Generate an integrated report in a final tab
+This usually means the content script isn't properly injected. Try:
 
-## File Structure
+1. **Refresh the Perplexity tab** - The most common fix
+2. **Check the tab URL** - Make sure you're on `https://www.perplexity.ai/` or `https://perplexity.ai/`
+3. **Reload the extension** - Go to `chrome://extensions/`, find this extension, and click the reload button
+4. **Check permissions** - Make sure the extension has permission to access Perplexity.ai
 
-```
-perplexity-multi-answer/
-├── manifest.json           # Extension configuration
-├── icons/                  # Extension icons
-│   ├── icon16.png
-│   ├── icon32.png
-│   ├── icon48.png
-│   └── icon128.png
-├── src/
-│   ├── background/         # Background service worker
-│   ├── content/           # Content scripts for Perplexity integration
-│   ├── options/           # Extension options page
-│   ├── popup/             # Popup interface
-│   └── utils/             # Shared utilities
-└── README.md              # This file
-```
+#### "No Perplexity tab found"
 
-## Permissions
+1. Open Perplexity.ai in a new tab
+2. Make sure the page is fully loaded
+3. Try refreshing the page
+4. Check that you're logged into Perplexity (if required)
 
-This extension requires the following permissions:
-- `tabs`: To create and manage browser tabs
-- `scripting`: To inject scripts into Perplexity pages
-- `storage`: To save user preferences and error logs
-- `contextMenus`: To add right-click menu options
-- `notifications`: To display error and status notifications
-- `host_permissions`: Access to `https://www.perplexity.ai/*`
+#### Extension not working after Chrome restart
 
-## Keyboard Shortcut
+1. Go to `chrome://extensions/`
+2. Find the extension and click the reload button
+3. Refresh any open Perplexity tabs
 
-- **Ctrl+Shift+Y** (Windows/Linux) or **Cmd+Shift+Y** (Mac): Open extension popup
+### Debug Tools
 
-## Error Handling
+Open `debug.html` in Chrome to access debugging tools:
 
-- Automatic retry up to 3 times for failed requests
-- Error notifications displayed in popup
-- Error logs saved within the extension for debugging
+1. **Check Extension** - Verify the extension is loaded
+2. **Check Perplexity Tabs** - See if Perplexity tabs are detected
+3. **Test Content Script** - Verify communication with content scripts
+4. **Send Test Query** - Test the full query process
 
-## Privacy
+### Advanced Troubleshooting
 
-- No query content or history is permanently stored
-- All processing happens locally in your browser
-- Only communicates with Perplexity AI's official website
+#### Check Console Logs
+
+1. Open Perplexity.ai
+2. Press F12 to open Developer Tools
+3. Go to the Console tab
+4. Look for messages starting with `[CS]` (Content Script)
+5. Try using the extension and watch for errors
+
+#### Check Background Script Logs
+
+1. Go to `chrome://extensions/`
+2. Find this extension and click "service worker"
+3. Look for messages starting with `[BG]` (Background)
+4. Try using the extension and watch for errors
+
+#### Manual Content Script Injection
+
+If automatic injection fails, you can manually inject:
+
+1. Open Perplexity.ai
+2. Open Developer Tools (F12)
+3. Go to Console tab
+4. Paste and run: `chrome.runtime.sendMessage({type: 'PING'})`
+5. If you get an error, the content script isn't loaded
+
+## Technical Details
+
+### Architecture
+
+- **Background Script** (`src/background/background.js`) - Handles communication between popup and content scripts
+- **Content Script** (`src/content/contentScript.js`) - Interacts with Perplexity.ai page
+- **Popup** (`src/popup/`) - User interface for configuring and starting queries
+
+### Communication Flow
+
+1. User clicks "Execute" in popup
+2. Popup sends message to background script
+3. Background script finds Perplexity tabs
+4. Background script ensures content script is injected
+5. Background script forwards request to content script
+6. Content script automates Perplexity.ai interface
+7. Results are collected and returned
+
+### Error Handling
+
+- Automatic content script injection if not present
+- Health check (PING/PONG) before sending queries
+- Retry mechanisms for failed communications
+- Detailed error messages for troubleshooting
 
 ## Development
 
-For development setup and contribution guidelines, please refer to the [`request.txt`](./request.txt) file which contains the detailed specification.
+### File Structure
+
+```
+perplexity-multi-answer/
+├── manifest.json           # Extension manifest
+├── debug.html             # Debug tools
+├── src/
+│   ├── background/
+│   │   └── background.js  # Background script
+│   ├── content/
+│   │   └── contentScript.js # Content script
+│   ├── popup/
+│   │   ├── popup.html     # Popup UI
+│   │   ├── popup.js       # Popup logic
+│   │   └── popup.css      # Popup styles
+│   ├── options/           # Options page
+│   └── utils/             # Utility functions
+└── icons/                 # Extension icons
+```
+
+### Key Improvements Made
+
+1. **Automatic Content Script Injection** - If the content script isn't responding, it's automatically injected
+2. **Health Checks** - PING/PONG mechanism to verify content script status
+3. **Better Error Messages** - More descriptive error messages for easier troubleshooting
+4. **Robust Tab Detection** - Improved logic for finding and validating Perplexity tabs
+5. **Debug Tools** - Built-in debugging interface for troubleshooting
 
 ## License
 
-This project is open source. Please check the repository for license details.
-
-## Support
-
-If you encounter any issues or have questions, please open an issue in the GitHub repository.
+MIT License
