@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Perplexity自動クエリ統合レポート",
+  "description": "複数クエリをPerplexityに自動送信し、回答を統合レポート化するChrome拡張機能。",
+  "version": "1.0.0",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*"
+  ],
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*",
+        "https://*.perplexity.ai/*"
+      ],
+      "js": ["src/content/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/options/options.html",
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
+      "description": "拡張機能のポップアップを開く"
+    }
+  }
+}

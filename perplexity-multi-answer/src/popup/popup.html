@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8" />
+    <title>Perplexityクエリ統合レポート</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="popup-container">
+        <h1 class="popup-title">Perplexityクエリ統合レポート</h1>
+        <p class="popup-desc">
+            クエリを1つ入力し、指定回数（2～5回）Perplexityに自動送信します。<br>
+            すべての回答を統合プロンプトでまとめ、レポート化します。<br>
+            統合レポートは新しいタブで表示されます。
+        </p>
+        <form id="query-form" autocomplete="off">
+            <label for="query" class="label">クエリ</label>
+            <textarea id="query" class="input-textarea" rows="3" placeholder="例：AIの最新動向について教えて" required aria-required="true"></textarea>
+            
+            <label for="query-count" class="label">送信回数（2～5回）</label>
+            <select id="query-count" class="input-select" required aria-required="true">
+                <option value="2">2回</option>
+                <option value="3">3回</option>
+                <option value="4">4回</option>
+                <option value="5">5回</option>
+            </select>
+
+            <label for="integrate-prompt" class="label">統合プロンプト</label>
+            <textarea id="integrate-prompt" class="input-textarea" rows="3" placeholder="例：上記の回答をまとめてレポートしてください" required aria-required="true"></textarea>
+            
+            <button type="submit" id="execute-btn" class="execute-btn">実行</button>
+        </form>
+
+        <div id="error-message" class="error-message" style="display:none;" aria-live="polite"></div>
+        <div id="status-message" class="status-message" style="display:none;" aria-live="polite"></div>
+
+        <div class="popup-footer">
+            <button id="open-error-log" class="footer-btn" type="button">エラーログ確認</button>
+            <span class="footer-note">※Perplexityにログインしていない場合はエラーになります</span>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
