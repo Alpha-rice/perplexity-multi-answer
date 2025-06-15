@@ -142,7 +142,7 @@
                 return;
             }
 
-            queryLog('Sending test query...');
+            queryLog(`Sending test query to ${count} new tabs...`);
             const queries = Array(count).fill(query);
 
             chrome.runtime.sendMessage({
@@ -154,8 +154,20 @@
                     queryLog(`Runtime error: ${chrome.runtime.lastError.message}`, 'error');
                 } else if (response) {
                     if (response.status === 'ok') {
-                        queryLog('Query sent successfully!', 'success');
-                        queryLog(`Response: ${JSON.stringify(response, null, 2)}`);
+                        queryLog('Multiple tab queries completed!', 'success');
+                        if (response.results) {
+                            queryLog(`Successful results: ${response.results.length}`, 'success');
+                            response.results.forEach((result, index) => {
+                                queryLog(`Tab ${result.tabIndex}: ${result.response.answer ? 'Success' : 'Response received'}`, 'success');
+                            });
+                        }
+                        if (response.errors && response.errors.length > 0) {
+                            queryLog(`Errors: ${response.errors.length}`, 'error');
+                            response.errors.forEach(error => {
+                                queryLog(`Error: ${error}`, 'error');
+                            });
+                        }
+                        queryLog(`Full response: ${JSON.stringify(response, null, 2)}`);
                     } else {
                         queryLog(`Error response: ${response.message || JSON.stringify(response)}`, 'error');
                     }
